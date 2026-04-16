@@ -104,7 +104,8 @@ const LandingPage = ({ onLoginClick, onSignupClick }: { onLoginClick: () => void
       {/* Navigation */}
       <nav className="h-20 border-b border-border/50 flex items-center justify-between px-8 bg-navy-900/50 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold text-primary glow-cyan-text">KIT GIZMO</h1>
+          <div className="w-8 h-8 rounded bg-primary flex items-center justify-center font-bold text-background text-xl select-none">K</div>
+          <h1 className="text-2xl font-bold text-primary glow-cyan-text tracking-tight">KIT GIZMO</h1>
         </div>
         <div className="flex items-center gap-4">
           <Button variant="ghost" onClick={onLoginClick}>Login</Button>
@@ -177,9 +178,9 @@ const LandingPage = ({ onLoginClick, onSignupClick }: { onLoginClick: () => void
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
-              { title: 'Shopify Development', desc: 'Full setup, theme customization, and payment gateway integration.', icon: ShoppingBag },
-              { title: 'Social Growth', desc: 'Boost your presence across all major platforms with targeted strategies.', icon: LayoutDashboard },
-              { title: 'Digital Marketing', desc: 'High-converting ad campaigns and content management.', icon: Wallet }
+              { title: 'Tech Gadgets', desc: 'Cutting-edge electronics and smart home devices.', icon: ShoppingBag },
+              { title: 'Home & Living', desc: 'Curated products for a modern, comfortable home.', icon: LayoutDashboard },
+              { title: 'Marketplace Goods', desc: 'Secure and verified electronics, home goods, and unique lifestyle items.', icon: Wallet }
             ].map((s, i) => (
               <Card key={i} className="bg-navy-900 border-border hover:border-primary/50 transition-colors group">
                 <CardHeader>
@@ -282,7 +283,10 @@ const SidebarContent = ({ user, onLogout, closeSheet }: { user: UserProfile, onL
   return (
     <div className="flex flex-col h-full bg-navy-900">
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-primary glow-cyan-text">KIT GIZMO</h1>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded bg-primary flex items-center justify-center font-bold text-background text-xl select-none">K</div>
+          <h1 className="text-2xl font-bold text-primary glow-cyan-text tracking-tight">KIT GIZMO</h1>
+        </div>
         <p className="text-xs text-muted-foreground">Service Platform</p>
       </div>
       
