@@ -1,0 +1,204 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string
+    //   - balance: number (required, >= 0)
+    //   - role: string (required, ['user', 'admin'])
+    //   - createdAt: string (ISO 8601)
+    //
+    // Collection: deposits
+    // Document ID: {depositId}
+    // Fields:
+    //   - id: string
+    //   - userId: string (required)
+    //   - userEmail: string
+    //   - amount: number (required, 30-500000)
+    //   - method: string
+    //   - proofUrl: string
+    //   - status: string (['pending', 'approved', 'rejected'])
+    //   - createdAt: string
+    //
+    // Collection: marketplace
+    // Document ID: {itemId}
+    // Fields:
+    //   - name: string
+    //   - logoUrl: string
+    //   - redirectLink: string
+    //
+    // Collection: tickets
+    // Document ID: {ticketId}
+    // Fields:
+    //   - id: string
+    //   - userId: string (required)
+    //   - userEmail: string
+    //   - subject: string (required, size < 200)
+    //   - message: string (required, size < 5000)
+    //   - screenshotUrl: string (optional, URL)
+    //   - status: string (['open', 'in-progress', 'closed'])
+    //   - createdAt: string
+    //   - messages: array (TicketMessage objects)
+    //   - hasNewAdminReply: boolean
+    //   - hasNewUserReply: boolean
+    //
+    // Collection: withdraws
+    // Document ID: {withdrawId}
+    // Fields:
+    //   - id: string
+    //   - userId: string (required)
+    //   - userEmail: string
+    //   - amount: number (required, >= 200)
+    //   - address: string (required)
+    //   - status: string (['pending', 'success', 'rejected'])
+    //   - createdAt: string
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "info.kitgizmo@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'balance', 'role']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.balance is number && data.balance >= 0 &&
+             data.role in ['user', 'admin'];
+    }
+
+    function isValidDeposit(data) {
+      return data.keys().hasAll(['userId', 'amount', 'status']) &&
+             data.userId is string &&
+             data.amount is number && data.amount >= 30 &&
+             data.status in ['pending', 'approved', 'rejected'];
+    }
+
+    function isValidTicket(data) {
+      return data.keys().hasAll(['userId', 'subject', 'message', 'status']) &&
+             data.userId is string &&
+             data.subject is string && data.subject.size() < 200 &&
+             data.message is string && data.message.size() < 5000 &&
+             (!('screenshotUrl' in data) || (data.screenshotUrl is string && data.screenshotUrl.matches("^https?://.*"))) &&
+             data.status in ['open', 'in-progress', 'closed'];
+    }
+
+    function isValidWithdraw(data) {
+      return data.keys().hasAll(['userId', 'amount', 'address', 'status']) &&
+             data.userId is string &&
+             data.amount is number && data.amount >= 200 &&
+             data.address is string && data.address.size() > 10 &&
+             data.status in ['pending', 'success', 'rejected'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Users can read their own profile. Admins can read all.
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Users can create their own profile with 0 balance and 'user' role.
+      // Admins can create any profile.
+      allow create: if isAuthenticated() && 
+                    isValidUser(request.resource.data) && 
+                    (
+                      (isOwner(userId) && request.resource.data.balance == 0 && request.resource.data.role == 'user') ||
+                      isAdmin()
+                    );
+      
+      // Users can update their own profile but NOT their balance or role.
+      // Admins can update anything.
+      allow update: if isAuthenticated() && 
+                    isValidUser(request.resource.data) &&
+                    (
+                      (isOwner(userId) && 
+                       request.resource.data.balance == resource.data.balance && 
+                       request.resource.data.role == resource.data.role) ||
+                      isAdmin()
+                    );
+    }
+
+    match /deposits/{depositId} {
+      // Users can read their own deposits. Admins can read all.
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      
+      // Users can create a deposit request for themselves with 'pending' status.
+      allow create: if isAuthenticated() && 
+                    isValidDeposit(request.resource.data) &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.status == 'pending';
+      
+      // Only admins can update or delete deposits (to approve/reject).
+      allow update, delete: if isAdmin();
+    }
+
+    match /marketplace/{itemId} {
+      // Anyone can read marketplace items.
+      allow read: if true;
+      
+      // Only admins can manage marketplace.
+      allow write: if isAdmin();
+    }
+
+    match /tickets/{ticketId} {
+      // Users can read their own tickets. Admins can read all.
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      
+      // Users can create a ticket for themselves with 'open' status.
+      allow create: if isAuthenticated() && 
+                    isValidTicket(request.resource.data) &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.status == 'open';
+      
+      // Users can reply to their own tickets. Admins can reply to any.
+      allow update: if isAdmin() || (
+        isOwner(resource.data.userId) && 
+        isValidTicket(request.resource.data) &&
+        (
+          // Allow closing
+          (request.resource.data.status == 'closed' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])) ||
+          // Allow adding messages
+          (resource.data.status != 'closed' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['messages', 'hasNewUserReply']))
+        )
+      );
+    }
+
+    match /withdraws/{withdrawId} {
+      // Users can read their own withdraws. Admins can read all.
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      
+      // Users can create a withdraw request for themselves with 'pending' status.
+      allow create: if isAuthenticated() && 
+                    isValidWithdraw(request.resource.data) &&
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.status == 'pending';
+      
+      // Only admins can update or delete withdraws.
+      allow update, delete: if isAdmin();
+    }
+  }
+}
