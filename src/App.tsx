@@ -1026,51 +1026,16 @@ const AdminOrders = () => {
 
   const handleUpdateStatus = async (orderId: string, newStatus: EcomOrder['status']) => {
     try {
-      let orderToUpdate: EcomOrder | undefined;
-      let oldStatus: EcomOrder['status'] | undefined;
-
       if (isFirebaseReady && db) {
-        const orderSnap = await getDocs(query(collection(db, 'ecom_orders'), where('__name__', '==', orderId)));
-        if (!orderSnap.empty) {
-          orderToUpdate = { id: orderSnap.docs[0].id, ...orderSnap.docs[0].data() } as EcomOrder;
-          oldStatus = orderToUpdate.status;
-          await updateDoc(doc(db, 'ecom_orders', orderId), { status: newStatus });
-        }
+        await updateDoc(doc(db, 'ecom_orders', orderId), { status: newStatus });
       } else {
         const orders = mockStore.getEcomOrders();
         const idx = orders.findIndex(o => o.id === orderId);
         if (idx !== -1) {
-          orderToUpdate = orders[idx];
-          oldStatus = orderToUpdate.status;
           orders[idx].status = newStatus;
           mockStore.saveEcomOrders(orders);
         }
       }
-
-      if (orderToUpdate) {
-        const allUsers = mockStore.getUsers();
-        const targetUser = allUsers.find(u => u.uid === orderToUpdate?.userId);
-        if (targetUser && oldStatus) {
-          // Refund logic
-          if (newStatus === 'Unfullfilled' && oldStatus !== 'Unfullfilled' && oldStatus !== 'Refunded') {
-            targetUser.balance += orderToUpdate.price;
-            toast.info(`Refund of $${orderToUpdate.price} issued to user.`);
-          }
-
-          // Decrement old status count
-          if (oldStatus === 'Unfullfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
-          else if (oldStatus === 'Fullfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
-          else if (oldStatus === 'Refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
-
-          // Increment new status count
-          if (newStatus === 'Unfullfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
-          else if (newStatus === 'Fullfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
-          else if (newStatus === 'Refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
-
-          mockStore.saveUsers(allUsers);
-        }
-      }
-
       toast.success('Order status updated');
       fetchOrders();
     } catch (error) {
@@ -1844,25 +1809,7 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
   const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
-    const fetchMethods = async () => {
-      try {
-        if (isFirebaseReady && db) {
-          const snap = await getDocs(collection(db, 'payment_settings'));
-          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentMethod));
-          if (data.length > 0) {
-            setMethods(data);
-          } else {
-            setMethods(mockStore.getPaymentMethods());
-          }
-        } else {
-          setMethods(mockStore.getPaymentMethods());
-        }
-      } catch (err) {
-        console.error('Error fetching payment methods:', err);
-        setMethods(mockStore.getPaymentMethods());
-      }
-    };
-    fetchMethods();
+    setMethods(mockStore.getPaymentMethods());
   }, []);
 
   const handleDeposit = async () => {
@@ -2210,8 +2157,7 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
     fulfilledOrders: 0,
     completedOrders: 0,
     refundedOrders: 0,
-    balance: 0,
-    status: 'active' as 'active' | 'suspended'
+    balance: 0
   });
 
   const saveStats = () => {
@@ -2223,7 +2169,7 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       mockStore.saveUsers(allUsers);
       refreshData();
       setEditingUser(null);
-      toast.success('User updated');
+      toast.success('Stats updated');
     }
   };
 
@@ -2235,29 +2181,17 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       fulfilledOrders: user.fulfilledOrders || 0,
       completedOrders: user.completedOrders || 0,
       refundedOrders: user.refundedOrders || 0,
-      balance: user.balance,
-      status: user.status || 'active'
+      balance: user.balance
     });
   };
 
-  const refreshData = async () => {
+  const refreshData = () => {
     setUsers(mockStore.getUsers());
     setDeposits(mockStore.getDeposits());
     setMarketplace(mockStore.getMarketplace());
+    setPaymentMethods(mockStore.getPaymentMethods());
     setOrders(mockStore.getOrders());
     setWithdraws(mockStore.getWithdraws());
-
-    try {
-      if (isFirebaseReady && db) {
-        const snap = await getDocs(collection(db, 'payment_settings'));
-        const dbMethods = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentMethod));
-        setPaymentMethods(dbMethods.length > 0 ? dbMethods : mockStore.getPaymentMethods());
-      } else {
-        setPaymentMethods(mockStore.getPaymentMethods());
-      }
-    } catch (e) {
-      setPaymentMethods(mockStore.getPaymentMethods());
-    }
   };
 
   useEffect(() => {
@@ -2360,30 +2294,16 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
     toast.success('Marketplace item added');
   };
 
-  const addPaymentMethod = async () => {
+  const addPaymentMethod = () => {
     if (!newPayment.name || !newPayment.address) return;
-    const method: PaymentMethod = {
+    const methods = mockStore.getPaymentMethods();
+    methods.push({
       id: Math.random().toString(36).substr(2, 9),
       name: newPayment.name,
       address: newPayment.address,
       qrCodeUrl: newPayment.qrCodeUrl,
-    };
-
-    if (isFirebaseReady && db) {
-      try {
-        await addDoc(collection(db, 'payment_settings'), method);
-      } catch (e) {
-        console.error('Firebase save failed, saving locally');
-        const methods = mockStore.getPaymentMethods();
-        methods.push(method);
-        mockStore.savePaymentMethods(methods);
-      }
-    } else {
-      const methods = mockStore.getPaymentMethods();
-      methods.push(method);
-      mockStore.savePaymentMethods(methods);
-    }
-    
+    });
+    mockStore.savePaymentMethods(methods);
     setNewPayment({ name: '', address: '', qrCodeUrl: '' });
     refreshData();
     toast.success('Payment method added');
@@ -2408,23 +2328,17 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       const allUsers = mockStore.getUsers();
       const targetUser = allUsers.find(u => u.uid === order.userId);
       if (targetUser) {
-        // Refund if status is Unfullfilled
-        if (status === 'Unfullfilled' && oldStatus !== 'Unfullfilled' && oldStatus !== 'Refunded') {
-          targetUser.balance += order.price;
-          toast.info(`Refund of $${order.price} issued to user.`);
-        }
-
         // Decrement old status count
-        if (oldStatus === 'Pending' || oldStatus === 'In-Progress') {
-          // No specific stat for In-Progress yet in mockStore increment logic below, usually treated as unfulfilled/pending balance
-        } else if (oldStatus === 'Unfullfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
-        else if (oldStatus === 'Fullfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
-        else if (oldStatus === 'Refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
+        if (oldStatus === 'pending' || oldStatus === 'unfulfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
+        else if (oldStatus === 'fulfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
+        else if (oldStatus === 'completed') targetUser.completedOrders = Math.max(0, (targetUser.completedOrders || 0) - 1);
+        else if (oldStatus === 'refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
 
         // Increment new status count
-        if (status === 'Unfullfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
-        else if (status === 'Fullfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
-        else if (status === 'Refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
+        if (status === 'pending' || status === 'unfulfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
+        else if (status === 'fulfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
+        else if (status === 'completed') targetUser.completedOrders = (targetUser.completedOrders || 0) + 1;
+        else if (status === 'refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
 
         mockStore.saveUsers(allUsers);
       }
@@ -2444,66 +2358,20 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8">
-        <Tabs defaultValue="dashboard" className="w-full flex flex-col lg:flex-row gap-8">
-          <TabsList className="bg-navy-900 border border-border flex flex-col h-auto p-2 gap-2 w-full lg:w-64 shrink-0 overflow-y-auto custom-scrollbar">
-            <TabsTrigger value="dashboard" className="justify-start gap-3 py-4 px-4 w-full text-left font-bold"><LayoutDashboard size={18} /> Dashboard</TabsTrigger>
+        <Tabs defaultValue="users" className="w-full flex flex-col lg:flex-row gap-8">
+          <TabsList className="bg-navy-900 border border-border flex flex-col h-auto p-2 gap-2 w-full lg:w-64 shrink-0">
             <TabsTrigger value="users" className="justify-start gap-3 py-4 px-4 w-full text-left"><User size={18} /> Users</TabsTrigger>
             <TabsTrigger value="deposits" className="justify-start gap-3 py-4 px-4 w-full text-left"><Wallet size={18} /> Deposits</TabsTrigger>
             <TabsTrigger value="products" className="justify-start gap-3 py-4 px-4 w-full text-left"><Package size={18} /> Products</TabsTrigger>
             <TabsTrigger value="ecom-orders" className="justify-start gap-3 py-4 px-4 w-full text-left"><Truck size={18} /> E-com Orders</TabsTrigger>
             <TabsTrigger value="marketplace" className="justify-start gap-3 py-4 px-4 w-full text-left"><ShoppingBag size={18} /> Marketplace</TabsTrigger>
             <TabsTrigger value="payments" className="justify-start gap-3 py-4 px-4 w-full text-left"><ShieldCheck size={18} /> Payments</TabsTrigger>
-            <TabsTrigger value="withdraws" className="justify-start gap-3 py-4 px-4 w-full text-left"><LogOut size={18} /> Withdrawals</TabsTrigger>
+            <TabsTrigger value="withdraws" className="justify-start gap-3 py-4 px-4 w-full text-left"><LogOut size={18} /> Withdraw Requests</TabsTrigger>
             <TabsTrigger value="orders" className="justify-start gap-3 py-4 px-4 w-full text-left"><ShoppingBag size={18} /> Service Orders</TabsTrigger>
             <TabsTrigger value="tickets" className="justify-start gap-3 py-4 px-4 w-full text-left"><Ticket size={18} /> Support Tickets</TabsTrigger>
           </TabsList>
 
           <div className="flex-1 min-w-0">
-            <TabsContent value="dashboard" className="mt-0">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <Card className="bg-navy-900 border-border p-6 border-l-4 border-l-primary">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-primary/10 rounded-lg text-primary">
-                      <ShoppingBag size={24} />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">Total Orders</p>
-                      <h4 className="text-3xl font-bold">{orders.length + mockStore.getEcomOrders().length}</h4>
-                    </div>
-                  </div>
-                </Card>
-                <Card className="bg-navy-900 border-border p-6 border-l-4 border-l-yellow-500">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-yellow-500/10 rounded-lg text-yellow-500">
-                      <Clock size={24} />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">Pending Orders</p>
-                      <h4 className="text-3xl font-bold">
-                        {orders.filter(o => o.status === 'Pending').length + 
-                         mockStore.getEcomOrders().filter(o => o.status === 'Pending').length}
-                      </h4>
-                    </div>
-                  </div>
-                </Card>
-                <Card className="bg-navy-900 border-border p-6 border-l-4 border-l-green-500">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-green-500/10 rounded-lg text-green-500">
-                      <CheckCircle2 size={24} />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">Fullfilled Orders</p>
-                      <h4 className="text-3xl font-bold">
-                        {orders.filter(o => o.status === 'Fullfilled').length + 
-                         mockStore.getEcomOrders().filter(o => o.status === 'Fullfilled').length}
-                      </h4>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-
-              <AdminStats />
-            </TabsContent>
             <TabsContent value="withdraws" className="mt-0">
               <Card className="bg-navy-900 border-border overflow-hidden">
                 <CardHeader>
@@ -2733,20 +2601,18 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                     {orders.map(o => (
                       <TableRow key={o.id}>
                         <TableCell className="font-medium">{o.serviceName}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground font-mono">{o.id}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">{users.find(u => u.uid === o.userId)?.email || 'Unknown'}</TableCell>
-                        <TableCell className="font-bold text-primary">${o.price}</TableCell>
                         <TableCell>
                           <select 
-                            className="bg-navy-950 border border-border p-2 rounded text-sm font-medium"
+                            className="bg-navy-950 border border-border p-2 rounded text-sm"
                             value={o.status}
                             onChange={(e) => updateOrderStatus(o.id, e.target.value as ServiceOrder['status'])}
                           >
-                            <option value="Pending">Pending</option>
-                            <option value="In-Progress">In-Progress</option>
-                            <option value="Fullfilled">Fullfilled</option>
-                            <option value="Unfullfilled">Unfullfilled (Refund)</option>
-                            <option value="Refunded">Refunded</option>
+                            <option value="pending">Pending</option>
+                            <option value="unfulfilled">Unfulfilled</option>
+                            <option value="fulfilled">Fulfilled</option>
+                            <option value="completed">Completed</option>
+                            <option value="refunded">Refunded</option>
                           </select>
                         </TableCell>
                       </TableRow>
@@ -2773,11 +2639,11 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                         value={o.status}
                         onChange={(e) => updateOrderStatus(o.id, e.target.value as ServiceOrder['status'])}
                       >
-                        <option value="Pending">Pending</option>
-                        <option value="In-Progress">In-Progress</option>
-                        <option value="Fullfilled">Fullfilled</option>
-                        <option value="Unfullfilled">Unfullfilled (Refund)</option>
-                        <option value="Refunded">Refunded</option>
+                        <option value="pending">Pending</option>
+                        <option value="unfulfilled">Unfulfilled</option>
+                        <option value="fulfilled">Fulfilled</option>
+                        <option value="completed">Completed</option>
+                        <option value="refunded">Refunded</option>
                       </select>
                     </div>
                   </div>
@@ -2847,12 +2713,7 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                             <p className="text-xs text-muted-foreground">{u.email}</p>
                           </div>
                         </TableCell>
-                        <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={u.status === 'suspended' ? 'destructive' : 'outline'}>{u.role}</Badge>
-                          {u.status === 'suspended' && <Badge variant="destructive" className="animate-pulse">SUSPENDED</Badge>}
-                        </div>
-                      </TableCell>
+                        <TableCell><Badge variant="outline">{u.role}</Badge></TableCell>
                         <TableCell className="font-mono text-primary">${u.balance.toLocaleString()}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -3048,20 +2909,9 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
               <CardDescription>{editingUser.email}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <Label className="text-xs font-bold text-muted-foreground">Account Status</Label>
-                  <select 
-                    className="bg-navy-950 border border-border p-2 rounded w-full h-10 text-sm"
-                    value={statsForm.status}
-                    onChange={e => setStatsForm({...statsForm, status: e.target.value as 'active' | 'suspended'})}
-                  >
-                    <option value="active">Active</option>
-                    <option value="suspended">Suspended</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs font-bold text-muted-foreground">Wallet Balance ($)</Label>
+                  <Label className="text-xs font-bold text-muted-foreground">Balance ($)</Label>
                   <Input 
                     type="number" 
                     className="bg-navy-950" 
@@ -3172,7 +3022,6 @@ const LoginPage = ({ onLogin, initialIsSignup = false }: { onLogin: (u: UserProf
         displayName: name || email.split('@')[0],
         balance: 0,
         role: 'user',
-        status: 'active',
         createdAt: new Date().toISOString(),
         totalOrders: 0,
         unfulfilledOrders: 0,

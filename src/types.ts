@@ -16,7 +16,6 @@ export interface UserProfile {
   displayName: string;
   balance: number;
   role: UserRole;
-  status: 'active' | 'suspended';
   createdAt: string;
   totalOrders: number;
   unfulfilledOrders: number;
@@ -42,7 +41,7 @@ export interface ServiceOrder {
   userId: string;
   serviceName: string;
   price: number;
-  status: 'Pending' | 'In-Progress' | 'Fullfilled' | 'Unfullfilled' | 'Refunded';
+  status: 'pending' | 'unfulfilled' | 'fulfilled' | 'completed' | 'refunded';
   createdAt: string;
 }
 
@@ -94,7 +93,7 @@ export interface EcomOrder {
   productId: string;
   productName: string;
   price: number;
-  status: 'Pending' | 'In-Progress' | 'Fullfilled' | 'Unfullfilled' | 'Refunded';
+  status: 'pending' | 'processing' | 'shipped' | 'delivered';
   shippingAddress: ShippingAddress;
   createdAt: string;
 }
