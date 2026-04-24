@@ -1026,16 +1026,51 @@ const AdminOrders = () => {
 
   const handleUpdateStatus = async (orderId: string, newStatus: EcomOrder['status']) => {
     try {
+      let orderToUpdate: EcomOrder | undefined;
+      let oldStatus: EcomOrder['status'] | undefined;
+
       if (isFirebaseReady && db) {
-        await updateDoc(doc(db, 'ecom_orders', orderId), { status: newStatus });
+        const orderSnap = await getDocs(query(collection(db, 'ecom_orders'), where('__name__', '==', orderId)));
+        if (!orderSnap.empty) {
+          orderToUpdate = { id: orderSnap.docs[0].id, ...orderSnap.docs[0].data() } as EcomOrder;
+          oldStatus = orderToUpdate.status;
+          await updateDoc(doc(db, 'ecom_orders', orderId), { status: newStatus });
+        }
       } else {
         const orders = mockStore.getEcomOrders();
         const idx = orders.findIndex(o => o.id === orderId);
         if (idx !== -1) {
+          orderToUpdate = orders[idx];
+          oldStatus = orderToUpdate.status;
           orders[idx].status = newStatus;
           mockStore.saveEcomOrders(orders);
         }
       }
+
+      if (orderToUpdate) {
+        const allUsers = mockStore.getUsers();
+        const targetUser = allUsers.find(u => u.uid === orderToUpdate?.userId);
+        if (targetUser && oldStatus) {
+          // Refund logic
+          if (newStatus === 'Unfullfilled' && oldStatus !== 'Unfullfilled' && oldStatus !== 'Refunded') {
+            targetUser.balance += orderToUpdate.price;
+            toast.info(`Refund of $${orderToUpdate.price} issued to user.`);
+          }
+
+          // Decrement old status count
+          if (oldStatus === 'Unfullfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
+          else if (oldStatus === 'Fullfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
+          else if (oldStatus === 'Refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
+
+          // Increment new status count
+          if (newStatus === 'Unfullfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
+          else if (newStatus === 'Fullfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
+          else if (newStatus === 'Refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
+
+          mockStore.saveUsers(allUsers);
+        }
+      }
+
       toast.success('Order status updated');
       fetchOrders();
     } catch (error) {
@@ -1078,9 +1113,9 @@ const AdminOrders = () => {
                   <TableCell>${order.price.toLocaleString()}</TableCell>
                   <TableCell>
                     <Badge variant={
-                      order.status === 'delivered' ? 'success' : 
-                      order.status === 'shipped' ? 'default' : 
-                      order.status === 'processing' ? 'secondary' : 'outline'
+                      order.status === 'Fullfilled' ? 'success' : 
+                      order.status === 'In-Progress' ? 'default' : 
+                      order.status === 'Pending' ? 'secondary' : 'outline'
                     }>
                       {order.status}
                     </Badge>
@@ -1098,10 +1133,11 @@ const AdminOrders = () => {
                       value={order.status}
                       onChange={(e) => handleUpdateStatus(order.id, e.target.value as EcomOrder['status'])}
                     >
-                      <option value="pending">Pending</option>
-                      <option value="processing">Processing</option>
-                      <option value="shipped">Shipped</option>
-                      <option value="delivered">Delivered</option>
+                      <option value="Pending">Pending</option>
+                      <option value="In-Progress">In-Progress</option>
+                      <option value="Fullfilled">Fullfilled</option>
+                      <option value="Unfullfilled">Unfullfilled (Refund)</option>
+                      <option value="Refunded">Refunded</option>
                     </select>
                   </TableCell>
                 </TableRow>
@@ -1392,14 +1428,15 @@ const ServiceOrderHistory = ({ user }: { user: UserProfile }) => {
 
   const getStatusBadge = (status: ServiceOrder['status']) => {
     switch (status) {
-      case 'pending':
+      case 'Pending':
         return <Badge className="bg-yellow-500/20 text-yellow-500 border-yellow-500/20">Pending</Badge>;
-      case 'unfulfilled':
-      case 'fulfilled':
+      case 'In-Progress':
         return <Badge className="bg-blue-500/20 text-blue-500 border-blue-500/20">Processing</Badge>;
-      case 'completed':
+      case 'Fullfilled':
         return <Badge className="bg-green-500/20 text-green-500 border-green-500/20">Complete</Badge>;
-      case 'refunded':
+      case 'Unfullfilled':
+        return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">Unfulfilled</Badge>;
+      case 'Refunded':
         return <Badge variant="destructive">Refunded</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
@@ -1809,7 +1846,25 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
   const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
-    setMethods(mockStore.getPaymentMethods());
+    const fetchMethods = async () => {
+      try {
+        if (isFirebaseReady && db) {
+          const snap = await getDocs(collection(db, 'payment_methods'));
+          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentMethod));
+          if (data.length > 0) {
+            setMethods(data);
+          } else {
+            setMethods(mockStore.getPaymentMethods());
+          }
+        } else {
+          setMethods(mockStore.getPaymentMethods());
+        }
+      } catch (err) {
+        console.error('Error fetching payment methods:', err);
+        setMethods(mockStore.getPaymentMethods());
+      }
+    };
+    fetchMethods();
   }, []);
 
   const handleDeposit = async () => {
@@ -2139,6 +2194,106 @@ const WithdrawPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser:
   );
 };
 
+
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as ChartTooltip, 
+  ResponsiveContainer, 
+  LineChart, 
+  Line, 
+  PieChart, 
+  Pie, 
+  Cell 
+} from 'recharts';
+
+const AdminStats = ({ users, orders, ecomOrders, deposits }: { 
+  users: UserProfile[], 
+  orders: ServiceOrder[], 
+  ecomOrders: EcomOrder[], 
+  deposits: DepositRequest[] 
+}) => {
+  const totalUsers = users.length;
+  const totalBalance = users.reduce((acc, u) => acc + u.balance, 0);
+  const totalDeposits = deposits.filter(d => d.status === 'completed').reduce((acc, d) => acc + d.amount, 0);
+
+  const orderData = [
+    { name: 'Service', value: orders.length },
+    { name: 'Store', value: ecomOrders.length },
+  ];
+
+  const statusData = [
+    { name: 'Pending', value: [...orders, ...ecomOrders].filter(o => o.status === 'Pending').length },
+    { name: 'Fullfilled', value: [...orders, ...ecomOrders].filter(o => o.status === 'Fullfilled').length },
+    { name: 'Unfullfilled', value: [...orders, ...ecomOrders].filter(o => o.status === 'Unfullfilled').length },
+  ];
+
+  const COLORS = ['#22d3ee', '#10b981', '#f59e0b', '#ef4444'];
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+      <Card className="bg-navy-900 border-border p-6">
+        <CardHeader className="px-0 pt-0">
+          <CardTitle className="text-lg">Order Distribution</CardTitle>
+        </CardHeader>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={orderData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
+              <YAxis stroke="#94a3b8" fontSize={12} />
+              <ChartTooltip 
+                contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }}
+                itemStyle={{ color: '#22d3ee' }}
+              />
+              <Bar dataKey="value" fill="#22d3ee" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="bg-navy-900 border-border p-6">
+        <CardHeader className="px-0 pt-0">
+          <CardTitle className="text-lg">Order Status</CardTitle>
+        </CardHeader>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={statusData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={80}
+                paddingAngle={5}
+                dataKey="value"
+              >
+                {statusData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <ChartTooltip 
+                contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b' }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex justify-center gap-6 mt-4">
+            {statusData.map((d, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                <span className="text-xs text-muted-foreground">{d.name} ({d.value})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
 const AdminPanel = ({ user }: { user: UserProfile }) => {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [deposits, setDeposits] = useState<DepositRequest[]>([]);
@@ -2157,7 +2312,8 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
     fulfilledOrders: 0,
     completedOrders: 0,
     refundedOrders: 0,
-    balance: 0
+    balance: 0,
+    status: 'active' as 'active' | 'suspended'
   });
 
   const saveStats = () => {
@@ -2169,7 +2325,7 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       mockStore.saveUsers(allUsers);
       refreshData();
       setEditingUser(null);
-      toast.success('Stats updated');
+      toast.success('User updated');
     }
   };
 
@@ -2181,17 +2337,29 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       fulfilledOrders: user.fulfilledOrders || 0,
       completedOrders: user.completedOrders || 0,
       refundedOrders: user.refundedOrders || 0,
-      balance: user.balance
+      balance: user.balance,
+      status: user.status || 'active'
     });
   };
 
-  const refreshData = () => {
+  const refreshData = async () => {
     setUsers(mockStore.getUsers());
     setDeposits(mockStore.getDeposits());
     setMarketplace(mockStore.getMarketplace());
-    setPaymentMethods(mockStore.getPaymentMethods());
     setOrders(mockStore.getOrders());
     setWithdraws(mockStore.getWithdraws());
+
+    try {
+      if (isFirebaseReady && db) {
+        const snap = await getDocs(collection(db, 'payment_methods'));
+        const dbMethods = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentMethod));
+        setPaymentMethods(dbMethods.length > 0 ? dbMethods : mockStore.getPaymentMethods());
+      } else {
+        setPaymentMethods(mockStore.getPaymentMethods());
+      }
+    } catch (e) {
+      setPaymentMethods(mockStore.getPaymentMethods());
+    }
   };
 
   useEffect(() => {
@@ -2294,19 +2462,49 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
     toast.success('Marketplace item added');
   };
 
-  const addPaymentMethod = () => {
+  const addPaymentMethod = async () => {
     if (!newPayment.name || !newPayment.address) return;
-    const methods = mockStore.getPaymentMethods();
-    methods.push({
+    const method: PaymentMethod = {
       id: Math.random().toString(36).substr(2, 9),
       name: newPayment.name,
       address: newPayment.address,
       qrCodeUrl: newPayment.qrCodeUrl,
-    });
-    mockStore.savePaymentMethods(methods);
+    };
+
+    if (isFirebaseReady && db) {
+      try {
+        await addDoc(collection(db, 'payment_methods'), method);
+      } catch (e) {
+        console.error('Firebase save failed, saving locally');
+        const methods = mockStore.getPaymentMethods();
+        methods.push(method);
+        mockStore.savePaymentMethods(methods);
+      }
+    } else {
+      const methods = mockStore.getPaymentMethods();
+      methods.push(method);
+      mockStore.savePaymentMethods(methods);
+    }
+    
     setNewPayment({ name: '', address: '', qrCodeUrl: '' });
     refreshData();
     toast.success('Payment method added');
+  };
+
+  const deletePaymentMethod = async (id: string) => {
+    if (isFirebaseReady && db) {
+      try {
+        await deleteDoc(doc(db, 'payment_methods', id));
+      } catch (e) {
+        const methods = mockStore.getPaymentMethods().filter(m => m.id !== id);
+        mockStore.savePaymentMethods(methods);
+      }
+    } else {
+      const methods = mockStore.getPaymentMethods().filter(m => m.id !== id);
+      mockStore.savePaymentMethods(methods);
+    }
+    refreshData();
+    toast.success('Payment method deleted');
   };
 
   const deleteMarketplaceItem = (id: string) => {
@@ -2328,17 +2526,23 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       const allUsers = mockStore.getUsers();
       const targetUser = allUsers.find(u => u.uid === order.userId);
       if (targetUser) {
+        // Refund if status is Unfullfilled
+        if (status === 'Unfullfilled' && oldStatus !== 'Unfullfilled' && oldStatus !== 'Refunded') {
+          targetUser.balance += order.price;
+          toast.info(`Refund of $${order.price} issued to user.`);
+        }
+
         // Decrement old status count
-        if (oldStatus === 'pending' || oldStatus === 'unfulfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
-        else if (oldStatus === 'fulfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
-        else if (oldStatus === 'completed') targetUser.completedOrders = Math.max(0, (targetUser.completedOrders || 0) - 1);
-        else if (oldStatus === 'refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
+        if (oldStatus === 'Pending' || oldStatus === 'In-Progress') {
+          // No specific stat for In-Progress yet in mockStore increment logic below, usually treated as unfulfilled/pending balance
+        } else if (oldStatus === 'Unfullfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
+        else if (oldStatus === 'Fullfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
+        else if (oldStatus === 'Refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
 
         // Increment new status count
-        if (status === 'pending' || status === 'unfulfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
-        else if (status === 'fulfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
-        else if (status === 'completed') targetUser.completedOrders = (targetUser.completedOrders || 0) + 1;
-        else if (status === 'refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
+        if (status === 'Unfullfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
+        else if (status === 'Fullfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
+        else if (status === 'Refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
 
         mockStore.saveUsers(allUsers);
       }
@@ -2358,20 +2562,71 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8">
-        <Tabs defaultValue="users" className="w-full flex flex-col lg:flex-row gap-8">
-          <TabsList className="bg-navy-900 border border-border flex flex-col h-auto p-2 gap-2 w-full lg:w-64 shrink-0">
-            <TabsTrigger value="users" className="justify-start gap-3 py-4 px-4 w-full text-left"><User size={18} /> Users</TabsTrigger>
-            <TabsTrigger value="deposits" className="justify-start gap-3 py-4 px-4 w-full text-left"><Wallet size={18} /> Deposits</TabsTrigger>
-            <TabsTrigger value="products" className="justify-start gap-3 py-4 px-4 w-full text-left"><Package size={18} /> Products</TabsTrigger>
-            <TabsTrigger value="ecom-orders" className="justify-start gap-3 py-4 px-4 w-full text-left"><Truck size={18} /> E-com Orders</TabsTrigger>
-            <TabsTrigger value="marketplace" className="justify-start gap-3 py-4 px-4 w-full text-left"><ShoppingBag size={18} /> Marketplace</TabsTrigger>
-            <TabsTrigger value="payments" className="justify-start gap-3 py-4 px-4 w-full text-left"><ShieldCheck size={18} /> Payments</TabsTrigger>
-            <TabsTrigger value="withdraws" className="justify-start gap-3 py-4 px-4 w-full text-left"><LogOut size={18} /> Withdraw Requests</TabsTrigger>
-            <TabsTrigger value="orders" className="justify-start gap-3 py-4 px-4 w-full text-left"><ShoppingBag size={18} /> Service Orders</TabsTrigger>
-            <TabsTrigger value="tickets" className="justify-start gap-3 py-4 px-4 w-full text-left"><Ticket size={18} /> Support Tickets</TabsTrigger>
+        <Tabs defaultValue="dashboard" className="w-full flex flex-col lg:flex-row gap-8">
+          <TabsList className="bg-navy-900 border border-border flex flex-col h-auto p-2 gap-2 w-full lg:w-72 shrink-0 overflow-y-auto custom-scrollbar sticky top-24 self-start">
+            <TabsTrigger value="dashboard" className="justify-start gap-3 py-4 px-4 w-full text-left font-bold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><LayoutDashboard size={18} /> Dashboard</TabsTrigger>
+            <TabsTrigger value="users" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><User size={18} /> Users</TabsTrigger>
+            <TabsTrigger value="deposits" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Wallet size={18} /> Deposits</TabsTrigger>
+            <TabsTrigger value="products" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Package size={18} /> Products</TabsTrigger>
+            <TabsTrigger value="ecom-orders" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Truck size={18} /> E-com Orders</TabsTrigger>
+            <TabsTrigger value="marketplace" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><ShoppingBag size={18} /> Marketplace</TabsTrigger>
+            <TabsTrigger value="payments" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><ShieldCheck size={18} /> Payments</TabsTrigger>
+            <TabsTrigger value="withdraws" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><LogOut size={18} /> Withdrawals</TabsTrigger>
+            <TabsTrigger value="orders" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><ShoppingBag size={18} /> Service Orders</TabsTrigger>
+            <TabsTrigger value="tickets" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Ticket size={18} /> Support Tickets</TabsTrigger>
           </TabsList>
 
           <div className="flex-1 min-w-0">
+            <TabsContent value="dashboard" className="mt-0">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <Card className="bg-navy-900 border-border p-6 border-l-4 border-l-primary">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-primary/10 rounded-lg text-primary">
+                      <ShoppingBag size={24} />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">Total Orders</p>
+                      <h4 className="text-3xl font-bold">{orders.length + mockStore.getEcomOrders().length}</h4>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="bg-navy-900 border-border p-6 border-l-4 border-l-yellow-500">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-yellow-500/10 rounded-lg text-yellow-500">
+                      <Clock size={24} />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">Pending Orders</p>
+                      <h4 className="text-3xl font-bold">
+                        {orders.filter(o => o.status === 'Pending').length + 
+                         mockStore.getEcomOrders().filter(o => o.status === 'Pending').length}
+                      </h4>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="bg-navy-900 border-border p-6 border-l-4 border-l-green-500">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-green-500/10 rounded-lg text-green-500">
+                      <CheckCircle2 size={24} />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">Fullfilled Orders</p>
+                      <h4 className="text-3xl font-bold">
+                        {orders.filter(o => o.status === 'Fullfilled').length + 
+                         mockStore.getEcomOrders().filter(o => o.status === 'Fullfilled').length}
+                      </h4>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              <AdminStats 
+                users={users} 
+                orders={orders} 
+                ecomOrders={mockStore.getEcomOrders()} 
+                deposits={deposits} 
+              />
+            </TabsContent>
             <TabsContent value="withdraws" className="mt-0">
               <Card className="bg-navy-900 border-border overflow-hidden">
                 <CardHeader>
@@ -2592,8 +2847,10 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>ID</TableHead>
                       <TableHead>Service</TableHead>
                       <TableHead>User</TableHead>
+                      <TableHead>Price</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -2601,18 +2858,20 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                     {orders.map(o => (
                       <TableRow key={o.id}>
                         <TableCell className="font-medium">{o.serviceName}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground font-mono">{o.id}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">{users.find(u => u.uid === o.userId)?.email || 'Unknown'}</TableCell>
+                        <TableCell className="font-bold text-primary">${o.price}</TableCell>
                         <TableCell>
                           <select 
-                            className="bg-navy-950 border border-border p-2 rounded text-sm"
+                            className="bg-navy-950 border border-border p-2 rounded text-sm font-medium"
                             value={o.status}
                             onChange={(e) => updateOrderStatus(o.id, e.target.value as ServiceOrder['status'])}
                           >
-                            <option value="pending">Pending</option>
-                            <option value="unfulfilled">Unfulfilled</option>
-                            <option value="fulfilled">Fulfilled</option>
-                            <option value="completed">Completed</option>
-                            <option value="refunded">Refunded</option>
+                            <option value="Pending">Pending</option>
+                            <option value="In-Progress">In-Progress</option>
+                            <option value="Fullfilled">Fullfilled</option>
+                            <option value="Unfullfilled">Unfullfilled (Refund)</option>
+                            <option value="Refunded">Refunded</option>
                           </select>
                         </TableCell>
                       </TableRow>
@@ -2639,11 +2898,11 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                         value={o.status}
                         onChange={(e) => updateOrderStatus(o.id, e.target.value as ServiceOrder['status'])}
                       >
-                        <option value="pending">Pending</option>
-                        <option value="unfulfilled">Unfulfilled</option>
-                        <option value="fulfilled">Fulfilled</option>
-                        <option value="completed">Completed</option>
-                        <option value="refunded">Refunded</option>
+                        <option value="Pending">Pending</option>
+                        <option value="In-Progress">In-Progress</option>
+                        <option value="Fullfilled">Fullfilled</option>
+                        <option value="Unfullfilled">Unfullfilled (Refund)</option>
+                        <option value="Refunded">Refunded</option>
                       </select>
                     </div>
                   </div>
@@ -2656,32 +2915,151 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
           </Card>
         </TabsContent>
 
-        <TabsContent value="payments" className="mt-6">
-          <Card className="bg-navy-900 border-border">
-            <CardHeader>
-              <CardTitle>Manual Payment Methods</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Input value={newPayment.name} onChange={e => setNewPayment({...newPayment, name: e.target.value})} placeholder="Method Name (e.g. USDT TRC20)" className="h-12" />
-                <Input value={newPayment.address} onChange={e => setNewPayment({...newPayment, address: e.target.value})} placeholder="Wallet Address/Instruction" className="h-12" />
-                <Input value={newPayment.qrCodeUrl} onChange={e => setNewPayment({...newPayment, qrCodeUrl: e.target.value})} placeholder="QR Code URL (Optional)" className="h-12" />
-              </div>
-              <Button className="w-full h-12" onClick={addPaymentMethod}>Add Payment Method</Button>
-              <div className="mt-4 space-y-2">
-                {paymentMethods.map(m => (
-                  <div key={m.id} className="p-4 bg-navy-950 rounded-lg flex justify-between items-center">
-                    <div>
-                      <p className="font-bold">{m.name}</p>
-                      <p className="text-sm text-muted-foreground font-mono">{m.address}</p>
+        <TabsContent value="payments" className="mt-0">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="bg-navy-900 border-border lg:col-span-1">
+              <CardHeader>
+                <CardTitle>Add Payment Method</CardTitle>
+                <CardDescription>Configure TRC20 addresses for global use</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Method Name</Label>
+                  <Input 
+                    value={newPayment.name} 
+                    onChange={e => setNewPayment({...newPayment, name: e.target.value})} 
+                    placeholder="USDT TRC20" 
+                    className="h-12 bg-navy-950 border-border" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Wallet Address / Instruction</Label>
+                  <Input 
+                    value={newPayment.address} 
+                    onChange={e => setNewPayment({...newPayment, address: e.target.value})} 
+                    placeholder="T..." 
+                    className="h-12 bg-navy-950 border-border" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">QR Code URL (Optional)</Label>
+                  <Input 
+                    value={newPayment.qrCodeUrl} 
+                    onChange={e => setNewPayment({...newPayment, qrCodeUrl: e.target.value})} 
+                    placeholder="https://..." 
+                    className="h-12 bg-navy-950 border-border" 
+                  />
+                </div>
+                <Button className="w-full h-12 text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90" onClick={addPaymentMethod}>Save Global Method</Button>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-navy-900 border-border lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Global Payment Methods</CardTitle>
+                <CardDescription>Active methods visible to all users</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {paymentMethods.map(method => (
+                    <div key={method.id} className="p-4 rounded-xl bg-navy-950 border border-border flex flex-col md:flex-row items-start md:items-center justify-between gap-6 hover:border-primary/50 transition-colors">
+                      <div className="space-y-2 w-full">
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-primary text-lg">{method.name}</p>
+                          <Button variant="destructive" size="icon" className="w-8 h-8 rounded-full" onClick={() => deletePaymentMethod(method.id)}>
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                        <p className="font-mono text-xs select-all break-all bg-navy-900 p-3 rounded-lg border border-border leading-relaxed">{method.address}</p>
+                      </div>
                     </div>
-                    <Button variant="destructive" size="sm" onClick={() => {
-                      const methods = paymentMethods.filter(p => p.id !== m.id);
-                      mockStore.savePaymentMethods(methods);
-                      refreshData();
-                    }}>Delete</Button>
+                  ))}
+                  {paymentMethods.length === 0 && (
+                    <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-xl">
+                      <Wallet size={48} className="mx-auto mb-4 opacity-20" />
+                      <p className="font-medium">No global payment methods configured.</p>
+                      <p className="text-sm">Methods added here will appear on the Add Funds page for all users.</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="withdraws" className="mt-0 text-foreground">
+          <Card className="bg-navy-900 border-border overflow-hidden">
+            <CardHeader className="border-b border-border/50 pb-6">
+              <CardTitle className="text-xl">Withdrawal Management</CardTitle>
+              <CardDescription>Approve or Reject TRC20 withdrawal requests</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0 sm:p-6">
+              <div className="hidden sm:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border">
+                      <TableHead>User Details</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Wallet Address (TRC20)</TableHead>
+                      <TableHead className="text-right">Administration</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {withdraws.filter(w => w.status === 'pending').map(w => (
+                      <TableRow key={w.id} className="border-border hover:bg-white/5 transition-colors">
+                        <TableCell>
+                          <p className="font-bold">{users.find(u => u.uid === w.userId)?.displayName || 'Unknown'}</p>
+                          <p className="text-xs text-muted-foreground">{w.userEmail}</p>
+                        </TableCell>
+                        <TableCell className="font-bold text-primary text-lg">${w.amount.toLocaleString()}</TableCell>
+                        <TableCell className="font-mono text-xs select-all bg-navy-950 p-2 rounded border border-border inline-block max-w-[200px] truncate">{w.address}</TableCell>
+                        <TableCell className="text-right space-x-2">
+                          <Button size="sm" className="bg-green-600 hover:bg-green-700 font-bold" onClick={() => handleWithdrawAction(w.id, 'success')}>Approve</Button>
+                          <Button size="sm" variant="destructive" className="font-bold" onClick={() => handleWithdrawAction(w.id, 'rejected')}>Reject</Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {withdraws.filter(w => w.status === 'pending').length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center py-16 text-muted-foreground">
+                          <LogOut size={48} className="mx-auto mb-4 opacity-20 rotate-180" />
+                          <p className="text-lg font-medium">No pending withdrawals found.</p>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="sm:hidden divide-y divide-border">
+                {withdraws.filter(w => w.status === 'pending').map(w => (
+                  <div key={w.id} className="p-4 space-y-4 bg-navy-950/30">
+                    <div className="flex justify-between items-center">
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">Requested By</p>
+                        <p className="font-medium">{w.userEmail}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground font-bold uppercase tracking-widest">Amount</p>
+                        <p className="font-bold text-primary text-xl">${w.amount.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-navy-950 border border-border shadow-inner">
+                      <p className="text-[10px] uppercase text-muted-foreground mb-2 font-bold tracking-tighter">TRC20 Destination Address</p>
+                      <p className="font-mono text-xs break-all select-all leading-relaxed text-primary/80">{w.address}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <Button size="lg" className="bg-green-600 hover:bg-green-700 h-14 text-lg font-bold shadow-lg" onClick={() => handleWithdrawAction(w.id, 'success')}>Approve</Button>
+                      <Button size="lg" variant="destructive" className="h-14 text-lg font-bold shadow-lg" onClick={() => handleWithdrawAction(w.id, 'rejected')}>Reject</Button>
+                    </div>
                   </div>
                 ))}
+                {withdraws.filter(w => w.status === 'pending').length === 0 && (
+                  <div className="p-20 text-center text-muted-foreground">
+                    <LogOut size={48} className="mx-auto mb-4 opacity-10 rotate-180" />
+                    <p className="font-bold">No pending withdrawals.</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -2713,7 +3091,12 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                             <p className="text-xs text-muted-foreground">{u.email}</p>
                           </div>
                         </TableCell>
-                        <TableCell><Badge variant="outline">{u.role}</Badge></TableCell>
+                        <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={u.status === 'suspended' ? 'destructive' : 'outline'}>{u.role}</Badge>
+                          {u.status === 'suspended' && <Badge variant="destructive" className="animate-pulse">SUSPENDED</Badge>}
+                        </div>
+                      </TableCell>
                         <TableCell className="font-mono text-primary">${u.balance.toLocaleString()}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -2909,9 +3292,20 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
               <CardDescription>{editingUser.email}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1">
-                  <Label className="text-xs font-bold text-muted-foreground">Balance ($)</Label>
+                  <Label className="text-xs font-bold text-muted-foreground">Account Status</Label>
+                  <select 
+                    className="bg-navy-950 border border-border p-2 rounded w-full h-10 text-sm"
+                    value={statsForm.status}
+                    onChange={e => setStatsForm({...statsForm, status: e.target.value as 'active' | 'suspended'})}
+                  >
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold text-muted-foreground">Wallet Balance ($)</Label>
                   <Input 
                     type="number" 
                     className="bg-navy-950" 
@@ -3022,6 +3416,7 @@ const LoginPage = ({ onLogin, initialIsSignup = false }: { onLogin: (u: UserProf
         displayName: name || email.split('@')[0],
         balance: 0,
         role: 'user',
+        status: 'active',
         createdAt: new Date().toISOString(),
         totalOrders: 0,
         unfulfilledOrders: 0,
