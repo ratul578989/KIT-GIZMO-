@@ -144,6 +144,7 @@ export const mockStore = {
         displayName: 'Administrator',
         balance: 1000000,
         role: 'admin',
+        status: 'active',
         createdAt: new Date().toISOString(),
         totalOrders: 0,
         unfulfilledOrders: 0,

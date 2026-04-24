@@ -128,6 +128,32 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "productId", "price", "status", "shippingAddress"]
+    },
+    "PaymentMethod": {
+      "title": "Payment Method",
+      "description": "Global payment settings for deposits (TRC20 etc)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "qrCodeUrl": { "type": "string" }
+      },
+      "required": ["name", "address"]
+    },
+    "ServiceOrder": {
+      "title": "Service Order",
+      "description": "Orders for digital/social growth services",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "price": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "In-Progress", "Fullfilled", "Unfullfilled", "Refunded"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "serviceName", "price", "status"]
     }
   },
   "firestore": {
@@ -158,6 +184,14 @@
     "/ecom_orders/{orderId}": {
       "schema": "EcomOrder",
       "description": "E-commerce orders"
+    },
+    "/payment_settings/{methodId}": {
+      "schema": "PaymentMethod",
+      "description": "Global payment addresses for users to see"
+    },
+    "/service_orders/{orderId}": {
+      "schema": "ServiceOrder",
+      "description": "Service/Social growth orders"
     }
   }
 }
