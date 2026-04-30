@@ -1846,25 +1846,7 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
   const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
-    const fetchMethods = async () => {
-      try {
-        if (isFirebaseReady && db) {
-          const snap = await getDocs(collection(db, 'payment_methods'));
-          const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentMethod));
-          if (data.length > 0) {
-            setMethods(data);
-          } else {
-            setMethods(mockStore.getPaymentMethods());
-          }
-        } else {
-          setMethods(mockStore.getPaymentMethods());
-        }
-      } catch (err) {
-        console.error('Error fetching payment methods:', err);
-        setMethods(mockStore.getPaymentMethods());
-      }
-    };
-    fetchMethods();
+    // Payment methods are now hardcoded in this component.
   }, []);
 
   const handleDeposit = async () => {
@@ -2917,70 +2899,22 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
 
         <TabsContent value="payments" className="mt-0">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Card className="bg-navy-900 border-border lg:col-span-1">
-              <CardHeader>
-                <CardTitle>Add Payment Method</CardTitle>
-                <CardDescription>Configure TRC20 addresses for global use</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Method Name</Label>
-                  <Input 
-                    value={newPayment.name} 
-                    onChange={e => setNewPayment({...newPayment, name: e.target.value})} 
-                    placeholder="USDT TRC20" 
-                    className="h-12 bg-navy-950 border-border" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Wallet Address / Instruction</Label>
-                  <Input 
-                    value={newPayment.address} 
-                    onChange={e => setNewPayment({...newPayment, address: e.target.value})} 
-                    placeholder="T..." 
-                    className="h-12 bg-navy-950 border-border" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">QR Code URL (Optional)</Label>
-                  <Input 
-                    value={newPayment.qrCodeUrl} 
-                    onChange={e => setNewPayment({...newPayment, qrCodeUrl: e.target.value})} 
-                    placeholder="https://..." 
-                    className="h-12 bg-navy-950 border-border" 
-                  />
-                </div>
-                <Button className="w-full h-12 text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90" onClick={addPaymentMethod}>Save Global Method</Button>
-              </CardContent>
-            </Card>
 
-            <Card className="bg-navy-900 border-border lg:col-span-2">
+            <Card className="bg-navy-900 border-border lg:col-span-3">
               <CardHeader>
                 <CardTitle>Global Payment Methods</CardTitle>
-                <CardDescription>Active methods visible to all users</CardDescription>
+                <CardDescription>Active method visible to all users</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {paymentMethods.map(method => (
-                    <div key={method.id} className="p-4 rounded-xl bg-navy-950 border border-border flex flex-col md:flex-row items-start md:items-center justify-between gap-6 hover:border-primary/50 transition-colors">
-                      <div className="space-y-2 w-full">
-                        <div className="flex items-center justify-between">
-                          <p className="font-bold text-primary text-lg">{method.name}</p>
-                          <Button variant="destructive" size="icon" className="w-8 h-8 rounded-full" onClick={() => deletePaymentMethod(method.id)}>
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                        <p className="font-mono text-xs select-all break-all bg-navy-900 p-3 rounded-lg border border-border leading-relaxed">{method.address}</p>
+                  <div className="p-4 rounded-xl bg-navy-950 border border-border flex flex-col md:flex-row items-start md:items-center justify-between gap-6 hover:border-primary/50 transition-colors">
+                    <div className="space-y-2 w-full">
+                      <div className="flex items-center justify-between">
+                        <p className="font-bold text-primary text-lg">USDT TRC20 (Preferred)</p>
                       </div>
+                      <p className="font-mono text-xs select-all break-all bg-navy-900 p-3 rounded-lg border border-border leading-relaxed">TPAXoRZNJyn9XqwtmkV9xaTAzyeqEW2Hxy</p>
                     </div>
-                  ))}
-                  {paymentMethods.length === 0 && (
-                    <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-xl">
-                      <Wallet size={48} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-medium">No global payment methods configured.</p>
-                      <p className="text-sm">Methods added here will appear on the Add Funds page for all users.</p>
-                    </div>
-                  )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
