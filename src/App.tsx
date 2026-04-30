@@ -1841,13 +1841,8 @@ const SupportCenter = ({ user }: { user: UserProfile }) => {
 const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: (u: UserProfile) => void }) => {
   const [amount, setAmount] = useState('');
   const [proof, setProof] = useState('');
-  const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-
-  useEffect(() => {
-    // Payment methods are now hardcoded in this component.
-  }, []);
 
   const handleDeposit = async () => {
     const val = parseFloat(amount);
@@ -1908,31 +1903,23 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-4">
-            {methods.map(m => (
-              <div key={m.id} className="p-4 rounded-lg bg-primary/5 border border-primary/20 text-sm">
-                <p className="font-bold text-primary mb-2">{m.name}</p>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <p className="font-mono select-all break-all text-xs md:text-sm bg-navy-950 p-2 rounded border border-border w-full">{m.address}</p>
-                  <Button 
-                    variant="secondary" 
-                    className="w-full sm:w-auto h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-                    onClick={() => {
-                      navigator.clipboard.writeText(m.address);
-                      toast.success('Copied to Clipboard!');
-                    }}
-                  >
-                    <Copy size={18} />
-                    Copy Address
-                  </Button>
-                </div>
-                {m.qrCodeUrl && (
-                  <div className="mt-4 flex justify-center">
-                    <img src={m.qrCodeUrl} alt="QR Code" className="w-48 h-48 rounded-lg border-2 border-primary/20 p-2 bg-white" />
-                  </div>
-                )}
+            <div className="p-4 rounded-lg bg-primary/5 border border-primary/20 text-sm">
+              <p className="font-bold text-primary mb-2">USDT TRC20 (Preferred)</p>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <p className="font-mono select-all break-all text-xs md:text-sm bg-navy-950 p-2 rounded border border-border w-full">TPAXoRZNJyn9XqwtmkV9xaTAzyeqEW2Hxy</p>
+                <Button 
+                  variant="secondary" 
+                  className="w-full sm:w-auto h-12 gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+                  onClick={() => {
+                    navigator.clipboard.writeText('TPAXoRZNJyn9XqwtmkV9xaTAzyeqEW2Hxy');
+                    toast.success('Copied to Clipboard!');
+                  }}
+                >
+                  <Copy size={18} />
+                  Copy Address
+                </Button>
               </div>
-            ))}
-            {methods.length === 0 && <p className="text-muted-foreground">No manual payment methods configured.</p>}
+            </div>
           </div>
 
           <div className="space-y-8 pt-4">
@@ -2552,7 +2539,6 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
             <TabsTrigger value="products" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Package size={18} /> Products</TabsTrigger>
             <TabsTrigger value="ecom-orders" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Truck size={18} /> E-com Orders</TabsTrigger>
             <TabsTrigger value="marketplace" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><ShoppingBag size={18} /> Marketplace</TabsTrigger>
-            <TabsTrigger value="payments" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><ShieldCheck size={18} /> Payments</TabsTrigger>
             <TabsTrigger value="withdraws" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><LogOut size={18} /> Withdrawals</TabsTrigger>
             <TabsTrigger value="orders" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><ShoppingBag size={18} /> Service Orders</TabsTrigger>
             <TabsTrigger value="tickets" className="justify-start gap-3 py-4 px-4 w-full text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary/20"><Ticket size={18} /> Support Tickets</TabsTrigger>
@@ -2895,30 +2881,6 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="payments" className="mt-0">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            <Card className="bg-navy-900 border-border lg:col-span-3">
-              <CardHeader>
-                <CardTitle>Global Payment Methods</CardTitle>
-                <CardDescription>Active method visible to all users</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="p-4 rounded-xl bg-navy-950 border border-border flex flex-col md:flex-row items-start md:items-center justify-between gap-6 hover:border-primary/50 transition-colors">
-                    <div className="space-y-2 w-full">
-                      <div className="flex items-center justify-between">
-                        <p className="font-bold text-primary text-lg">USDT TRC20 (Preferred)</p>
-                      </div>
-                      <p className="font-mono text-xs select-all break-all bg-navy-900 p-3 rounded-lg border border-border leading-relaxed">TPAXoRZNJyn9XqwtmkV9xaTAzyeqEW2Hxy</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
 
         <TabsContent value="withdraws" className="mt-0 text-foreground">
