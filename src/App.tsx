@@ -44,7 +44,7 @@ import { mockStore } from './lib/store';
 import { UserProfile, DepositRequest, ServiceOrder, MarketplaceItem, PaymentMethod, SupportTicket, TicketMessage, Product, EcomOrder, ShippingAddress, WithdrawRequest } from './types';
 import { storage, db, isFirebaseReady, isStorageReady } from './lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc, getDocs, query, where, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, updateDoc, doc, deleteDoc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // --- Error Boundary ---
 
@@ -1841,6 +1841,7 @@ const SupportCenter = ({ user }: { user: UserProfile }) => {
 const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: (u: UserProfile) => void }) => {
   const [amount, setAmount] = useState('');
   const [proof, setProof] = useState('');
+  const [txid, setTxid] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -1850,48 +1851,70 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
       toast.error('Amount must be between $30 and $500,000');
       return;
     }
-    if (!proof) {
-      toast.error('Please provide transaction proof (Hash or URL)');
+    if (!txid) {
+      toast.error('Please provide TXID or Hash');
       return;
     }
 
     setIsProcessing(true);
     setShowSuccess(false);
 
-    // Simulate network delay for "Processing" animation
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {
+      const depositId = Math.random().toString(36).substr(2, 9);
+      const newDeposit: DepositRequest = {
+        id: depositId,
+        userId: user.uid,
+        userEmail: user.email,
+        amount: val,
+        method: 'USDT TRC20',
+        proofUrl: proof || 'N/A',
+        txid: txid,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
 
-    const newDeposit: DepositRequest = {
-      id: Math.random().toString(36).substr(2, 9),
-      userId: user.uid,
-      userEmail: user.email,
-      amount: val,
-      method: 'Manual Payment',
-      proofUrl: proof,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    };
+      if (isFirebaseReady && db) {
+        // Save to Firebase
+        await setDoc(doc(db, 'deposit_requests', depositId), newDeposit);
+        
+        // Also add to transactions collection
+        await setDoc(doc(db, 'transactions', depositId), {
+          id: depositId,
+          userId: user.uid,
+          amount: val,
+          method: 'USDT',
+          status: 'pending',
+          createdAt: newDeposit.createdAt
+        });
+      } else {
+        // Fallback to mockStore
+        const deposits = mockStore.getDeposits();
+        deposits.push(newDeposit);
+        mockStore.saveDeposits(deposits);
 
-    const deposits = mockStore.getDeposits();
-    deposits.push(newDeposit);
-    mockStore.saveDeposits(deposits);
+        const transactions = mockStore.getTransactions();
+        transactions.push({
+          id: depositId,
+          userId: user.uid,
+          amount: val,
+          method: 'USDT',
+          status: 'pending',
+          createdAt: newDeposit.createdAt
+        });
+        mockStore.saveTransactions(transactions);
+      }
 
-    // Create transaction record
-    const transactions = mockStore.getTransactions();
-    transactions.push({
-      id: newDeposit.id,
-      userId: user.uid,
-      amount: val,
-      method: 'USDT',
-      status: 'pending',
-      createdAt: newDeposit.createdAt
-    });
-    mockStore.saveTransactions(transactions);
-    
-    setIsProcessing(false);
-    setShowSuccess(true);
-    setAmount('');
-    setProof('');
+      toast.success('Deposit request submitted! Please wait for approval.');
+      setShowSuccess(true);
+      setAmount('');
+      setProof('');
+      setTxid('');
+    } catch (error) {
+      console.error('Deposit Error:', error);
+      toast.error('Failed to submit deposit. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -1937,18 +1960,29 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
                 className="bg-navy-950 border-border h-12 text-lg"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="proof">Transaction Hash / Proof URL</Label>
-              <Input 
-                id="proof" 
-                placeholder="Paste TXID or image link" 
-                value={proof} 
-                onChange={(e) => {
-                  setProof(e.target.value);
-                  setShowSuccess(false);
-                }}
-                className="bg-navy-950 border-border h-12"
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="txid" className="flex items-center gap-2">
+                  TXID / Hash <span className="text-red-500 font-bold">*</span>
+                </Label>
+                <Input 
+                  id="txid" 
+                  placeholder="Paste Transaction Hash here" 
+                  value={txid} 
+                  onChange={(e) => setTxid(e.target.value)}
+                  className="bg-navy-950 border-border h-12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="proof">Proof URL / Screenshot Link (Optional)</Label>
+                <Input 
+                  id="proof" 
+                  placeholder="e.g. Imgur, lightshot, or cloud link" 
+                  value={proof} 
+                  onChange={(e) => setProof(e.target.value)}
+                  className="bg-navy-950 border-border h-12"
+                />
+              </div>
             </div>
 
             <AnimatePresence>
@@ -1959,7 +1993,7 @@ const DepositPage = ({ user, onUpdateUser }: { user: UserProfile, onUpdateUser: 
                   exit={{ opacity: 0, height: 0, y: -10 }}
                   className="bg-cyan-500/20 border border-cyan-500/50 p-4 rounded-lg text-white text-sm font-medium text-center shadow-[0_0_15px_rgba(6,182,212,0.2)]"
                 >
-                  Payment Received! Please wait 10-30 minutes for manual verification. Your balance will be updated automatically once approved.
+                  Request Submitted! Please wait 10-30 minutes for manual verification. Your balance will be updated automatically once approved.
                 </motion.div>
               )}
             </AnimatePresence>
@@ -2263,18 +2297,16 @@ const AdminStats = ({ users, orders, ecomOrders, deposits }: {
   );
 };
 
-const AdminPanel = ({ user }: { user: UserProfile }) => {
+const AdminPanel = ({ user: currentUser }: { user: UserProfile }) => {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [deposits, setDeposits] = useState<DepositRequest[]>([]);
   const [marketplace, setMarketplace] = useState<MarketplaceItem[]>([]);
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
-  const [newLogo, setNewLogo] = useState({ name: '', url: '', link: '' });
-
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [withdraws, setWithdraws] = useState<WithdrawRequest[]>([]);
-  const [newPayment, setNewPayment] = useState({ name: '', address: '', qrCodeUrl: '' });
-
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [newLogo, setNewLogo] = useState({ name: '', url: '', link: '' });
+  const [newPayment, setNewPayment] = useState({ name: '', address: '', qrCodeUrl: '' });
   const [statsForm, setStatsForm] = useState({
     totalOrders: 0,
     unfulfilledOrders: 0,
@@ -2285,16 +2317,56 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
     status: 'active' as 'active' | 'suspended'
   });
 
-  const saveStats = () => {
+  useEffect(() => {
+    if (!isFirebaseReady || !db) {
+      setUsers(mockStore.getUsers());
+      setDeposits(mockStore.getDeposits());
+      setWithdraws(mockStore.getWithdraws());
+      setOrders(mockStore.getOrders());
+      return;
+    }
+
+    // Real-time sync
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+      setUsers(snap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+    });
+    const unsubDeposits = onSnapshot(collection(db, 'deposit_requests'), (snap) => {
+      setDeposits(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as DepositRequest)));
+    });
+    const unsubWithdraws = onSnapshot(collection(db, 'withdraw_requests'), (snap) => {
+      setWithdraws(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WithdrawRequest)));
+    });
+    const unsubOrders = onSnapshot(collection(db, 'service_orders'), (snap) => {
+      setOrders(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceOrder)));
+    });
+
+    return () => {
+      unsubUsers();
+      unsubDeposits();
+      unsubWithdraws();
+      unsubOrders();
+    };
+  }, []);
+
+  const saveStats = async () => {
     if (!editingUser) return;
-    const allUsers = mockStore.getUsers();
-    const index = allUsers.findIndex(u => u.uid === editingUser.uid);
-    if (index !== -1) {
-      allUsers[index] = { ...allUsers[index], ...statsForm };
-      mockStore.saveUsers(allUsers);
-      refreshData();
+    
+    try {
+      if (isFirebaseReady && db) {
+        await updateDoc(doc(db, 'users', editingUser.uid), statsForm);
+      } else {
+        const allUsers = mockStore.getUsers();
+        const index = allUsers.findIndex(u => u.uid === editingUser.uid);
+        if (index !== -1) {
+          allUsers[index] = { ...allUsers[index], ...statsForm };
+          mockStore.saveUsers(allUsers);
+        }
+      }
       setEditingUser(null);
-      toast.success('User updated');
+      toast.success('User updated successfully');
+    } catch (error) {
+      console.error('Error saving user stats:', error);
+      toast.error('Failed to save user stats.');
     }
   };
 
@@ -2307,217 +2379,166 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
       completedOrders: user.completedOrders || 0,
       refundedOrders: user.refundedOrders || 0,
       balance: user.balance,
-      status: user.status || 'active'
+      status: (user as any).status || 'active'
     });
   };
 
-  const refreshData = async () => {
-    setUsers(mockStore.getUsers());
-    setDeposits(mockStore.getDeposits());
-    setMarketplace(mockStore.getMarketplace());
-    setOrders(mockStore.getOrders());
-    setWithdraws(mockStore.getWithdraws());
+  const adjustBalance = async (uid: string, amount: number) => {
+    try {
+      const userToUpdate = users.find(u => u.uid === uid);
+      if (!userToUpdate) return;
+
+      const newBalance = userToUpdate.balance + amount;
+
+      if (isFirebaseReady && db) {
+        await updateDoc(doc(db, 'users', uid), { balance: newBalance });
+        await addDoc(collection(db, 'transactions'), {
+          id: Math.random().toString(36).substr(2, 9),
+          userId: uid,
+          amount: Math.abs(amount),
+          method: amount >= 0 ? 'Manual Credit' : 'Manual Debit',
+          status: 'success',
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        const allUsers = mockStore.getUsers();
+        const index = allUsers.findIndex(u => u.uid === uid);
+        if (index !== -1) {
+          allUsers[index].balance = newBalance;
+          mockStore.saveUsers(allUsers);
+        }
+      }
+      toast.success(`Balance adjusted for ${userToUpdate.displayName}`);
+    } catch (error) {
+      console.error('Adjust Balance Error:', error);
+      toast.error('Failed to adjust balance.');
+    }
+  };
+
+  const handleDepositAction = async (id: string, action: 'completed' | 'rejected') => {
+    const deposit = deposits.find(d => d.id === id);
+    if (!deposit || deposit.status !== 'pending') return;
 
     try {
       if (isFirebaseReady && db) {
-        const snap = await getDocs(collection(db, 'payment_methods'));
-        const dbMethods = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PaymentMethod));
-        setPaymentMethods(dbMethods.length > 0 ? dbMethods : mockStore.getPaymentMethods());
-      } else {
-        setPaymentMethods(mockStore.getPaymentMethods());
-      }
-    } catch (e) {
-      setPaymentMethods(mockStore.getPaymentMethods());
-    }
-  };
-
-  useEffect(() => {
-    refreshData();
-  }, []);
-
-  const adjustBalance = (uid: string, amount: number) => {
-    const allUsers = mockStore.getUsers();
-    const targetUser = allUsers.find(u => u.uid === uid);
-    if (targetUser) {
-      targetUser.balance += amount;
-      mockStore.saveUsers(allUsers);
-
-      // Create transaction record for manual adjustment
-      const allTransactions = mockStore.getTransactions();
-      allTransactions.push({
-        id: Math.random().toString(36).substr(2, 9),
-        userId: uid,
-        amount: Math.abs(amount),
-        method: amount >= 0 ? 'Manual Credit' : 'Manual Debit',
-        status: 'success',
-        createdAt: new Date().toISOString()
-      });
-      mockStore.saveTransactions(allTransactions);
-
-      refreshData();
-      toast.success(`Balance adjusted for ${targetUser.displayName}`);
-    }
-  };
-
-  const handleDepositAction = (id: string, action: 'completed' | 'rejected') => {
-    const allDeposits = mockStore.getDeposits();
-    const deposit = allDeposits.find(d => d.id === id);
-    if (deposit && deposit.status === 'pending') {
-      deposit.status = action;
-      mockStore.saveDeposits(allDeposits);
-
-      // Update transaction record
-      const allTransactions = mockStore.getTransactions();
-      const transaction = allTransactions.find(t => t.id === id);
-      if (transaction) {
-        transaction.status = action === 'completed' ? 'success' : 'rejected';
-        mockStore.saveTransactions(allTransactions);
-      }
-      
-      if (action === 'completed') {
-        const allUsers = mockStore.getUsers();
-        const targetUser = allUsers.find(u => u.uid === deposit.userId);
-        if (targetUser) {
-          targetUser.balance += deposit.amount;
-          mockStore.saveUsers(allUsers);
+        // Update deposit status
+        await updateDoc(doc(db, 'deposit_requests', id), { status: action });
+        
+        // Update transaction status
+        const txSnap = await getDocs(query(collection(db, 'transactions'), where('id', '==', id)));
+        if (!txSnap.empty) {
+          await updateDoc(doc(db, 'transactions', txSnap.docs[0].id), { 
+            status: action === 'completed' ? 'success' : 'rejected' 
+          });
         }
-        toast.success('Deposit accepted and balance updated.');
-      } else {
-        toast.error('Deposit rejected.');
-      }
-      
-      refreshData();
-    }
-  };
 
-  const handleWithdrawAction = (id: string, action: 'success' | 'rejected') => {
-    const allWithdraws = mockStore.getWithdraws();
-    const withdraw = allWithdraws.find(w => w.id === id);
-    if (withdraw && withdraw.status === 'pending') {
-      withdraw.status = action;
-      mockStore.saveWithdraws(allWithdraws);
-
-      const allUsers = mockStore.getUsers();
-      const targetUser = allUsers.find(u => u.uid === withdraw.userId);
-      
-      if (targetUser) {
-        if (action === 'success') {
-          targetUser.totalWithdrawn = (targetUser.totalWithdrawn || 0) + withdraw.amount;
-          toast.success('Withdrawal marked as complete.');
+        if (action === 'completed') {
+          const targetUser = users.find(u => u.uid === deposit.userId);
+          if (targetUser) {
+            await updateDoc(doc(db, 'users', deposit.userId), {
+              balance: targetUser.balance + deposit.amount
+            });
+            toast.success('Deposit accepted and balance updated.');
+          }
         } else {
-          // Refund balance if rejected
-          targetUser.balance += withdraw.amount;
-          toast.error('Withdrawal rejected and funds refunded.');
+          toast.error('Deposit rejected.');
         }
-        mockStore.saveUsers(allUsers);
+      } else {
+        // Mock fallback
+        toast.info(`Deposit ${action} (Firestore not ready)`);
       }
-      
-      refreshData();
+    } catch (error) {
+      console.error('Deposit Action Error:', error);
+      toast.error('Failed to process deposit action.');
     }
   };
 
-  const addMarketplaceItem = () => {
+  const handleWithdrawAction = async (id: string, action: 'success' | 'rejected') => {
+    const withdraw = withdraws.find(w => w.id === id);
+    if (!withdraw || withdraw.status !== 'pending') return;
+
+    try {
+      if (isFirebaseReady && db) {
+        await updateDoc(doc(db, 'withdraw_requests', id), { status: action });
+        
+        if (action === 'rejected') {
+          const targetUser = users.find(u => u.uid === withdraw.userId);
+          if (targetUser) {
+            await updateDoc(doc(db, 'users', withdraw.userId), {
+              balance: targetUser.balance + withdraw.amount
+            });
+            toast.error('Withdrawal rejected and funds refunded.');
+          }
+        } else {
+          const targetUser = users.find(u => u.uid === withdraw.userId);
+          if (targetUser) {
+            await updateDoc(doc(db, 'users', withdraw.userId), {
+              totalWithdrawn: (targetUser.totalWithdrawn || 0) + withdraw.amount
+            });
+            toast.success('Withdrawal marked as complete.');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Withdraw Action Error:', error);
+    }
+  };
+
+  const addMarketplaceItem = async () => {
     if (!newLogo.name || !newLogo.url) return;
-    const items = mockStore.getMarketplace();
-    items.push({
+    const item = {
       id: Math.random().toString(36).substr(2, 9),
       name: newLogo.name,
       logoUrl: newLogo.url,
       redirectLink: newLogo.link || '#',
-    });
-    mockStore.saveMarketplace(items);
-    setNewLogo({ name: '', url: '', link: '' });
-    refreshData();
-    toast.success('Marketplace item added');
-  };
-
-  const addPaymentMethod = async () => {
-    if (!newPayment.name || !newPayment.address) return;
-    const method: PaymentMethod = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: newPayment.name,
-      address: newPayment.address,
-      qrCodeUrl: newPayment.qrCodeUrl,
     };
 
     if (isFirebaseReady && db) {
-      try {
-        await addDoc(collection(db, 'payment_methods'), method);
-      } catch (e) {
-        console.error('Firebase save failed, saving locally');
-        const methods = mockStore.getPaymentMethods();
-        methods.push(method);
-        mockStore.savePaymentMethods(methods);
-      }
+      await addDoc(collection(db, 'marketplace'), item);
     } else {
-      const methods = mockStore.getPaymentMethods();
-      methods.push(method);
-      mockStore.savePaymentMethods(methods);
+      const items = mockStore.getMarketplace();
+      items.push(item);
+      mockStore.saveMarketplace(items);
     }
-    
-    setNewPayment({ name: '', address: '', qrCodeUrl: '' });
-    refreshData();
-    toast.success('Payment method added');
+    setNewLogo({ name: '', url: '', link: '' });
+    toast.success('Marketplace item added');
   };
 
   const deletePaymentMethod = async (id: string) => {
     if (isFirebaseReady && db) {
-      try {
-        await deleteDoc(doc(db, 'payment_methods', id));
-      } catch (e) {
-        const methods = mockStore.getPaymentMethods().filter(m => m.id !== id);
-        mockStore.savePaymentMethods(methods);
-      }
-    } else {
-      const methods = mockStore.getPaymentMethods().filter(m => m.id !== id);
-      mockStore.savePaymentMethods(methods);
+      await deleteDoc(doc(db, 'payment_methods', id));
     }
-    refreshData();
     toast.success('Payment method deleted');
   };
 
-  const deleteMarketplaceItem = (id: string) => {
-    const items = mockStore.getMarketplace().filter(i => i.id !== id);
-    mockStore.saveMarketplace(items);
-    refreshData();
+  const deleteMarketplaceItem = async (id: string) => {
+    if (isFirebaseReady && db) {
+      await deleteDoc(doc(db, 'marketplace', id));
+    }
     toast.success('Marketplace item deleted');
   };
 
-  const updateOrderStatus = (orderId: string, status: ServiceOrder['status']) => {
-    const allOrders = mockStore.getOrders();
-    const order = allOrders.find(o => o.id === orderId);
-    if (order) {
-      const oldStatus = order.status;
-      order.status = status;
-      mockStore.saveOrders(allOrders);
-      
-      // Update user stats
-      const allUsers = mockStore.getUsers();
-      const targetUser = allUsers.find(u => u.uid === order.userId);
-      if (targetUser) {
-        // Refund if status is Unfullfilled
-        if (status === 'Unfullfilled' && oldStatus !== 'Unfullfilled' && oldStatus !== 'Refunded') {
-          targetUser.balance += order.price;
-          toast.info(`Refund of $${order.price} issued to user.`);
+  const updateOrderStatus = async (orderId: string, status: ServiceOrder['status']) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    try {
+      if (isFirebaseReady && db) {
+        const oldStatus = order.status;
+        await updateDoc(doc(db, 'service_orders', orderId), { status });
+        
+        const targetUser = users.find(u => u.uid === order.userId);
+        if (targetUser) {
+          if (status === 'Unfullfilled' && oldStatus !== 'Unfullfilled' && oldStatus !== 'Refunded') {
+            await updateDoc(doc(db, 'users', order.userId), {
+              balance: targetUser.balance + order.price
+            });
+          }
         }
-
-        // Decrement old status count
-        if (oldStatus === 'Pending' || oldStatus === 'In-Progress') {
-          // No specific stat for In-Progress yet in mockStore increment logic below, usually treated as unfulfilled/pending balance
-        } else if (oldStatus === 'Unfullfilled') targetUser.unfulfilledOrders = Math.max(0, (targetUser.unfulfilledOrders || 0) - 1);
-        else if (oldStatus === 'Fullfilled') targetUser.fulfilledOrders = Math.max(0, (targetUser.fulfilledOrders || 0) - 1);
-        else if (oldStatus === 'Refunded') targetUser.refundedOrders = Math.max(0, (targetUser.refundedOrders || 0) - 1);
-
-        // Increment new status count
-        if (status === 'Unfullfilled') targetUser.unfulfilledOrders = (targetUser.unfulfilledOrders || 0) + 1;
-        else if (status === 'Fullfilled') targetUser.fulfilledOrders = (targetUser.fulfilledOrders || 0) + 1;
-        else if (status === 'Refunded') targetUser.refundedOrders = (targetUser.refundedOrders || 0) + 1;
-
-        mockStore.saveUsers(allUsers);
       }
-
-      refreshData();
       toast.success(`Order status updated to ${status}`);
+    } catch (error) {
+      console.error('Update Order Error:', error);
     }
   };
 
@@ -2525,8 +2546,8 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
     <div className="space-y-8 px-4 md:px-0">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-2xl md:text-3xl font-bold">Admin Control Center</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={refreshData}>Refresh Data</Button>
+        <div className="flex gap-2 text-xs text-muted-foreground italic">
+          Real-time sync active (Firebase)
         </div>
       </div>
 
@@ -3061,6 +3082,7 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                     <TableRow>
                       <TableHead>User</TableHead>
                       <TableHead>Amount</TableHead>
+                      <TableHead>TXID</TableHead>
                       <TableHead>Proof</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
@@ -3070,6 +3092,13 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                       <TableRow key={d.id}>
                         <TableCell>{d.userEmail}</TableCell>
                         <TableCell className="font-bold">${d.amount}</TableCell>
+                        <TableCell>
+                          {d.txid ? (
+                            <code className="bg-navy-950 p-1 rounded text-[10px] break-all">{d.txid}</code>
+                          ) : (
+                            <span className="text-muted-foreground text-xs italic">No TXID</span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <a href={d.proofUrl} target="_blank" rel="noreferrer" className="text-primary flex items-center gap-1 hover:underline">
                             View Proof <ExternalLink size={14} />
@@ -3098,6 +3127,12 @@ const AdminPanel = ({ user }: { user: UserProfile }) => {
                       <span className="text-sm font-medium text-muted-foreground">{d.userEmail}</span>
                       <span className="font-bold text-primary text-xl">${d.amount.toLocaleString()}</span>
                     </div>
+                    {d.txid && (
+                      <div className="bg-navy-950 p-2 rounded border border-border">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold mb-1">TXID / Hash</p>
+                        <code className="text-[10px] break-all text-primary">{d.txid}</code>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 text-primary bg-primary/5 p-3 rounded-lg border border-primary/20">
                       <ExternalLink size={16} />
                       <a href={d.proofUrl} target="_blank" rel="noreferrer" className="text-sm font-medium hover:underline">View Transaction Proof</a>
@@ -3295,23 +3330,17 @@ const LoginPage = ({ onLogin, initialIsSignup = false }: { onLogin: (u: UserProf
     setIsSignup(initialIsSignup);
   }, [initialIsSignup]);
 
-  const handleSubmit = (e: any) => {
+  const handleSubmit = async (e: any) => {
     e.preventDefault();
     if (!email || !password) return;
 
-    const users = mockStore.getUsers();
-    
     if (isSignup) {
-      if (users.find(u => u.email === email)) {
-        toast.error('User already exists');
-        return;
-      }
       const newUser: UserProfile = {
         uid: Math.random().toString(36).substr(2, 9),
         email,
         displayName: name || email.split('@')[0],
         balance: 0,
-        role: 'user',
+        role: email === 'info.kitgizmo@gmail.com' ? 'admin' : 'user',
         status: 'active',
         createdAt: new Date().toISOString(),
         totalOrders: 0,
@@ -3320,12 +3349,52 @@ const LoginPage = ({ onLogin, initialIsSignup = false }: { onLogin: (u: UserProf
         completedOrders: 0,
         refundedOrders: 0,
       };
-      users.push(newUser);
-      mockStore.saveUsers(users);
+
+      if (isFirebaseReady && db) {
+        try {
+          // Check if email taken in firebase
+          const q = query(collection(db, 'users'), where('email', '==', email));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            toast.error('User already exists');
+            return;
+          }
+          await setDoc(doc(db, 'users', newUser.uid), newUser);
+        } catch (e) {
+          console.error('Firebase signup error:', e);
+        }
+      } else {
+        const users = mockStore.getUsers();
+        if (users.find(u => u.email === email)) {
+          toast.error('User already exists');
+          return;
+        }
+        users.push(newUser);
+        mockStore.saveUsers(users);
+      }
+      
       onLogin(newUser);
       toast.success('Account created!');
     } else {
-      const user = users.find(u => u.email === email);
+      let user: UserProfile | undefined;
+      
+      if (isFirebaseReady && db) {
+        try {
+          const q = query(collection(db, 'users'), where('email', '==', email));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            user = { uid: snap.docs[0].id, ...snap.docs[0].data() } as UserProfile;
+          }
+        } catch (e) {
+          console.error('Firebase login error:', e);
+        }
+      }
+
+      if (!user) {
+        const users = mockStore.getUsers();
+        user = users.find(u => u.email === email);
+      }
+
       if (user) {
         onLogin(user);
         toast.success(`Welcome back, ${user.displayName}`);
@@ -3403,15 +3472,35 @@ export default function App() {
     
     // Simulate auth check
     const savedUser = mockStore.getCurrentUser();
+    
     if (savedUser) {
-      // Refresh user data from "DB"
-      const allUsers = mockStore.getUsers();
-      const freshUser = allUsers.find(u => u.uid === savedUser.uid);
-      if (freshUser) {
-        setUser(freshUser);
+      if (isFirebaseReady && db) {
+        // Real-time sync for the logged in user
+        const unsub = onSnapshot(doc(db, 'users', savedUser.uid), (doc) => {
+          if (doc.exists()) {
+            const userData = doc.data() as UserProfile;
+            setUser({ ...userData, uid: doc.id });
+          } else {
+            // If user doc doesn't exist in firestore yet, fallback to local refresh once
+            const allUsers = mockStore.getUsers();
+            const freshUser = allUsers.find(u => u.uid === savedUser.uid);
+            if (freshUser) setUser(freshUser);
+          }
+          setLoading(false);
+        });
+        return () => unsub();
+      } else {
+        // Refresh user data from mockStore
+        const allUsers = mockStore.getUsers();
+        const freshUser = allUsers.find(u => u.uid === savedUser.uid);
+        if (freshUser) {
+          setUser(freshUser);
+        }
+        setLoading(false);
       }
+    } else {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   const handleLogin = (u: UserProfile) => {

@@ -32,6 +32,7 @@ export interface DepositRequest {
   amount: number;
   method: string;
   proofUrl: string;
+  txid?: string;
   status: 'pending' | 'completed' | 'rejected';
   createdAt: string;
 }
